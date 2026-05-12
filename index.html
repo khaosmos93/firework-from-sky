@@ -9,57 +9,93 @@
 <body>
 <canvas id="c"></canvas>
 <script>
-var c=document.getElementById('c'),ctx=c.getContext('2d'),W,H,particles=[];
+var c=document.getElementById('c'),ctx=c.getContext('2d'),W,H,rockets=[],particles=[];
 
-function resize(){W=c.width=window.innerWidth;H=c.height=window.innerHeight}
+function resize(){W=c.width=innerWidth;H=c.height=innerHeight}
 window.addEventListener('resize',resize);
 resize();
 
-function explode(x,y){
-  var hue=Math.random()*360,count=120+Math.random()*80|0;
-  for(var i=0;i<count;i++){
-    var angle=Math.random()*Math.PI*2,speed=1+Math.random()*5;
+function explode(x,y,hue){
+  var n=160+Math.random()*80|0;
+  for(var i=0;i<n;i++){
+    // evenly distributed angles for a clean circular burst (top-down look)
+    var a=Math.PI*2*(i/n)+(Math.random()-.5)*.12;
+    var s=.8+Math.random()*4.5;
     particles.push({
       x:x,y:y,
-      vx:Math.cos(angle)*speed,
-      vy:Math.sin(angle)*speed,
+      vx:Math.cos(a)*s,
+      vy:Math.sin(a)*s,
       life:1,
-      decay:0.012+Math.random()*0.018,
-      size:1.5+Math.random()*1.5,
-      hue:hue+Math.random()*40-20
+      decay:.005+Math.random()*.009,
+      sz:1.5+Math.random()*.8,
+      hue:hue+(Math.random()-.5)*30
     });
   }
+}
+
+function launch(tx,ty){
+  var sx=tx+(Math.random()-.5)*60;
+  var hue=Math.random()*360;
+  var dx=tx-sx,dy=ty-H,d=Math.sqrt(dx*dx+dy*dy);
+  var spd=8+Math.random()*4;
+  rockets.push({x:sx,y:H,vx:dx/d*spd,vy:dy/d*spd,tx:tx,ty:ty,hue:hue,gone:d});
 }
 
 function frame(){
   requestAnimationFrame(frame);
   ctx.globalCompositeOperation='source-over';
-  ctx.fillStyle='rgba(0,0,0,0.18)';
+  ctx.fillStyle='rgba(0,0,0,.22)';
   ctx.fillRect(0,0,W,H);
   ctx.globalCompositeOperation='lighter';
+
+  for(var i=rockets.length-1;i>=0;i--){
+    var r=rockets[i];
+    r.x+=r.vx;r.y+=r.vy;
+    r.gone-=Math.sqrt(r.vx*r.vx+r.vy*r.vy);
+    // bright white-hot dot while rising
+    ctx.globalAlpha=1;
+    ctx.fillStyle='hsl('+r.hue+',80%,95%)';
+    ctx.fillRect(r.x-2,r.y-2,4,4);
+    // inner glow
+    ctx.globalAlpha=.4;
+    ctx.fillStyle='hsl('+r.hue+',100%,70%)';
+    ctx.fillRect(r.x-4,r.y-4,8,8);
+    if(r.gone<=0){
+      explode(r.x,r.y,r.hue);
+      rockets.splice(i,1);
+    }
+  }
+
   for(var i=particles.length-1;i>=0;i--){
     var p=particles[i];
     p.x+=p.vx;p.y+=p.vy;
-    p.vy+=0.04;
-    p.vx*=0.97;p.vy*=0.97;
+    p.vy+=.055;   // gravity: particles fall downward (aerial view drift)
+    p.vx*=.975;p.vy*=.975;
     p.life-=p.decay;
     if(p.life<=0){particles.splice(i,1);continue;}
     ctx.globalAlpha=p.life*p.life;
     ctx.fillStyle='hsl('+p.hue+',100%,65%)';
-    ctx.fillRect(p.x-p.size/2,p.y-p.size/2,p.size,p.size);
+    ctx.fillRect(p.x-p.sz*.5,p.y-p.sz*.5,p.sz,p.sz);
   }
   ctx.globalAlpha=1;
 }
 
-function fire(e){
-  var r=e.touches?e.touches[0]:e;
-  explode(r.clientX,r.clientY);
-}
+function fire(x,y){launch(x,y)}
 
-c.addEventListener('click',fire);
-c.addEventListener('touchstart',function(e){e.preventDefault();fire(e);},{passive:false});
+c.addEventListener('click',function(e){fire(e.clientX,e.clientY)});
+c.addEventListener('touchstart',function(e){
+  e.preventDefault();
+  for(var i=0;i<e.touches.length;i++)fire(e.touches[i].clientX,e.touches[i].clientY);
+},{passive:false});
 
-explode(W/2,H/2);
+// startup burst
+setTimeout(function(){fire(W*.5,H*.35)},200);
+
+// periodic auto-launches
+setInterval(function(){
+  fire(W*.15+Math.random()*W*.7, H*.15+Math.random()*H*.45);
+},2200);
+
 frame();
 </script>
 </body>
