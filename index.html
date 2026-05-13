@@ -1,102 +1,253 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Fireworks</title>
-<style>*{margin:0;padding:0}body{background:#000;overflow:hidden}canvas{display:block}</style>
+<title>3D Fireworks — Aerial View</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #000; overflow: hidden; }
+canvas { display: block; }
+#info {
+  position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+  color: rgba(255,255,255,.32); font: 12px/1 monospace; pointer-events: none;
+  letter-spacing: .08em;
+}
+</style>
 </head>
 <body>
 <canvas id="c"></canvas>
+<div id="info">CLICK TO LAUNCH &nbsp;·&nbsp; 3D AERIAL VIEW</div>
 <script>
-var c=document.getElementById('c'),ctx=c.getContext('2d'),W,H,rockets=[],particles=[];
-
-function resize(){W=c.width=innerWidth;H=c.height=innerHeight}
-window.addEventListener('resize',resize);
+// ── Canvas & resize ────────────────────────────────────────────────────────
+var c = document.getElementById('c'), ctx = c.getContext('2d'), W, H;
+function resize() { W = c.width = innerWidth; H = c.height = innerHeight; }
+window.addEventListener('resize', resize);
 resize();
 
-function explode(x,y,hue){
-  var n=160+Math.random()*80|0;
-  for(var i=0;i<n;i++){
-    // evenly distributed angles for a clean circular burst (top-down look)
-    var a=Math.PI*2*(i/n)+(Math.random()-.5)*.12;
-    var s=.8+Math.random()*4.5;
-    particles.push({
-      x:x,y:y,
-      vx:Math.cos(a)*s,
-      vy:Math.sin(a)*s,
-      life:1,
-      decay:.005+Math.random()*.009,
-      sz:1.5+Math.random()*.8,
-      hue:hue+(Math.random()-.5)*30
-    });
-  }
+// ── 3-D coordinate system ──────────────────────────────────────────────────
+// X  →  screen right
+// Z  →  screen down
+// Y  ↑  altitude (up from ground)
+//
+// Camera sits at Y = CAM_Y looking straight down.
+// Perspective scale  s = FOCAL / (CAM_Y − y)
+// So higher-altitude points appear further from the canvas center — as you'd
+// see from a plane: a spark at 400 m looks more displaced than one at ground.
+
+var CAM_Y = 900, FOCAL = 650;
+
+function project(x, y, z) {
+  var d = CAM_Y - y;
+  if (d <= 1) return null;
+  var s = FOCAL / d;
+  return { sx: W * 0.5 + x * s, sy: H * 0.5 + z * s, s: s };
 }
 
-function launch(tx,ty){
-  var sx=tx+(Math.random()-.5)*60;
-  var hue=Math.random()*360;
-  var dx=tx-sx,dy=ty-H,d=Math.sqrt(dx*dx+dy*dy);
-  var spd=8+Math.random()*4;
-  rockets.push({x:sx,y:H,vx:dx/d*spd,vy:dy/d*spd,tx:tx,ty:ty,hue:hue,gone:d});
+// ── Object pools ───────────────────────────────────────────────────────────
+var rockets = [], particles = [];
+
+// ── Rocket ─────────────────────────────────────────────────────────────────
+// In 3-D space a rocket rises along Y.  Its X/Z drift is small, so from above
+// it looks like a glowing dot drifting slightly before it pops.
+
+function Rocket(wx, wz, hue) {    // wx/wz = world target coords
+  this.x  = wx + (Math.random() - 0.5) * 20;
+  this.z  = wz + (Math.random() - 0.5) * 20;
+  this.y  = 0;
+  this.vx = (Math.random() - 0.5) * 0.6;
+  this.vy = 5 + Math.random() * 3.5;   // rise speed
+  this.vz = (Math.random() - 0.5) * 0.6;
+  this.hue   = hue;
+  this.peakY = 160 + Math.random() * 240;
+  this.trail = [];                      // last N positions
 }
 
-function frame(){
-  requestAnimationFrame(frame);
-  ctx.globalCompositeOperation='source-over';
-  ctx.fillStyle='rgba(0,0,0,.22)';
-  ctx.fillRect(0,0,W,H);
-  ctx.globalCompositeOperation='lighter';
+Rocket.prototype.update = function () {
+  this.trail.push({ x: this.x, y: this.y, z: this.z });
+  if (this.trail.length > 10) this.trail.shift();
 
-  for(var i=rockets.length-1;i>=0;i--){
-    var r=rockets[i];
-    r.x+=r.vx;r.y+=r.vy;
-    r.gone-=Math.sqrt(r.vx*r.vx+r.vy*r.vy);
-    // bright white-hot dot while rising
-    ctx.globalAlpha=1;
-    ctx.fillStyle='hsl('+r.hue+',80%,95%)';
-    ctx.fillRect(r.x-2,r.y-2,4,4);
-    // inner glow
-    ctx.globalAlpha=.4;
-    ctx.fillStyle='hsl('+r.hue+',100%,70%)';
-    ctx.fillRect(r.x-4,r.y-4,8,8);
-    if(r.gone<=0){
-      explode(r.x,r.y,r.hue);
-      rockets.splice(i,1);
-    }
+  this.x += this.vx;
+  this.y += this.vy;
+  this.z += this.vz;
+
+  if (this.y >= this.peakY) {
+    burst(this.x, this.y, this.z, this.hue);
+    return false;   // remove rocket
+  }
+  return true;
+};
+
+Rocket.prototype.draw = function () {
+  // Trail — fading squares
+  for (var i = 0; i < this.trail.length; i++) {
+    var t = this.trail[i];
+    var p = project(t.x, t.y, t.z);
+    if (!p) continue;
+    var a = (i / this.trail.length) * 0.55;
+    var sz = p.s * 1.2;
+    ctx.globalAlpha = a;
+    ctx.fillStyle = 'hsl(' + this.hue + ',100%,75%)';
+    ctx.fillRect(p.sx - sz * 0.5, p.sy - sz * 0.5, sz, sz);
   }
 
-  for(var i=particles.length-1;i>=0;i--){
-    var p=particles[i];
-    p.x+=p.vx;p.y+=p.vy;
-    p.vy+=.055;   // gravity: particles fall downward (aerial view drift)
-    p.vx*=.975;p.vy*=.975;
-    p.life-=p.decay;
-    if(p.life<=0){particles.splice(i,1);continue;}
-    ctx.globalAlpha=p.life*p.life;
-    ctx.fillStyle='hsl('+p.hue+',100%,65%)';
-    ctx.fillRect(p.x-p.sz*.5,p.y-p.sz*.5,p.sz,p.sz);
-  }
-  ctx.globalAlpha=1;
+  // Rocket head — bright core + soft halo
+  var p = project(this.x, this.y, this.z);
+  if (!p) return;
+  var r = p.s * 2.2;
+
+  // Halo
+  var g = ctx.createRadialGradient(p.sx, p.sy, 0, p.sx, p.sy, r * 3.5);
+  g.addColorStop(0, 'hsla(' + this.hue + ',100%,90%,.55)');
+  g.addColorStop(1, 'hsla(' + this.hue + ',100%,70%,0)');
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(p.sx, p.sy, r * 3.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Core pixel
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(p.sx - r * 0.5, p.sy - r * 0.5, r, r);
+};
+
+// ── Particle ───────────────────────────────────────────────────────────────
+// Each particle gets a random direction on the unit sphere, so the burst is a
+// true 3-D shell.  From above you see a ring that blooms outward and then
+// contracts as gravity drags particles down (lower Y → smaller perspective scale).
+
+function Particle(x, y, z, hue) {
+  this.x = x; this.y = y; this.z = z;
+
+  // Uniform sphere sampling
+  var theta = Math.random() * Math.PI * 2;
+  var phi   = Math.acos(2 * Math.random() - 1);
+  var spd   = 1.2 + Math.random() * 4.2;
+
+  this.vx = spd * Math.sin(phi) * Math.cos(theta);
+  this.vy = spd * Math.cos(phi);
+  this.vz = spd * Math.sin(phi) * Math.sin(theta);
+
+  this.hue   = hue + (Math.random() - 0.5) * 35;
+  this.life  = 1.0;
+  this.decay = 0.007 + Math.random() * 0.011;
 }
 
-function fire(x,y){launch(x,y)}
+Particle.prototype.update = function () {
+  this.vx *= 0.973;
+  this.vy  = this.vy * 0.973 - 0.055;  // gravity
+  this.vz *= 0.973;
 
-c.addEventListener('click',function(e){fire(e.clientX,e.clientY)});
-c.addEventListener('touchstart',function(e){
+  this.x += this.vx;
+  this.y += this.vy;
+  this.z += this.vz;
+
+  this.life -= this.decay;
+  return this.life > 0 && this.y > -30;
+};
+
+Particle.prototype.draw = function () {
+  var p = project(this.x, this.y, this.z);
+  if (!p) return;
+  var sz = Math.max(0.5, p.s * 1.6 * (0.4 + this.life * 0.6));
+  var lum = 55 + this.life * 30 | 0;
+  ctx.globalAlpha = this.life * this.life;
+  ctx.fillStyle = 'hsl(' + this.hue + ',100%,' + lum + '%)';
+  ctx.fillRect(p.sx - sz * 0.5, p.sy - sz * 0.5, sz, sz);
+};
+
+// ── Burst ──────────────────────────────────────────────────────────────────
+function burst(x, y, z, hue) {
+  // Flash ring: a ring of brighter, faster inner particles
+  var flash = 40;
+  for (var i = 0; i < flash; i++) {
+    var a = (Math.PI * 2 * i) / flash;
+    var p = new Particle(x, y, z, hue);
+    var spd = 5 + Math.random() * 3;
+    p.vx = Math.cos(a) * spd; p.vy = 0; p.vz = Math.sin(a) * spd;
+    p.decay = 0.025 + Math.random() * 0.01;
+    particles.push(p);
+  }
+  // Main 3-D shell
+  var n = 140 + Math.random() * 80 | 0;
+  for (var i = 0; i < n; i++) particles.push(new Particle(x, y, z, hue));
+}
+
+// ── Launch helpers ─────────────────────────────────────────────────────────
+// Convert screen click (sx, sy) into world X/Z by inverting the projection at
+// ground level (y = 0, scale = FOCAL / CAM_Y).
+var GROUND_SCALE = FOCAL / CAM_Y;
+
+function screenToWorld(sx, sy) {
+  return {
+    wx: (sx - W * 0.5) / GROUND_SCALE,
+    wz: (sy - H * 0.5) / GROUND_SCALE
+  };
+}
+
+function launch(sx, sy) {
+  var w = screenToWorld(sx, sy);
+  rockets.push(new Rocket(w.wx, w.wz, Math.random() * 360 | 0));
+}
+
+// ── Input ──────────────────────────────────────────────────────────────────
+c.addEventListener('click', function (e) { launch(e.clientX, e.clientY); });
+c.addEventListener('touchstart', function (e) {
   e.preventDefault();
-  for(var i=0;i<e.touches.length;i++)fire(e.touches[i].clientX,e.touches[i].clientY);
-},{passive:false});
+  for (var i = 0; i < e.touches.length; i++)
+    launch(e.touches[i].clientX, e.touches[i].clientY);
+}, { passive: false });
 
-// startup burst
-setTimeout(function(){fire(W*.5,H*.35)},200);
+// ── Auto-launch ────────────────────────────────────────────────────────────
+var nextFire = 0;
+function autoFire(t) {
+  if (t < nextFire) return;
+  var sx = W * 0.12 + Math.random() * W * 0.76;
+  var sy = H * 0.12 + Math.random() * H * 0.76;
+  launch(sx, sy);
+  // Occasionally fire a cluster
+  if (Math.random() < 0.25) {
+    setTimeout(function () { launch(sx + (Math.random() - 0.5) * 80, sy + (Math.random() - 0.5) * 80); }, 160 + Math.random() * 200);
+    setTimeout(function () { launch(sx + (Math.random() - 0.5) * 80, sy + (Math.random() - 0.5) * 80); }, 320 + Math.random() * 300);
+  }
+  nextFire = t + 900 + Math.random() * 1600;
+}
 
-// periodic auto-launches
-setInterval(function(){
-  fire(W*.15+Math.random()*W*.7, H*.15+Math.random()*H*.45);
-},2200);
+// ── Render loop ────────────────────────────────────────────────────────────
+function frame(t) {
+  requestAnimationFrame(frame);
 
-frame();
+  // Translucent black fill — leaves a fading trail on canvas
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = 'rgba(0,0,4,.19)';
+  ctx.fillRect(0, 0, W, H);
+
+  // Use 'lighter' blend for additive glow
+  ctx.globalCompositeOperation = 'lighter';
+
+  autoFire(t);
+
+  // Rockets
+  for (var i = rockets.length - 1; i >= 0; i--) {
+    rockets[i].draw();
+    if (!rockets[i].update()) rockets.splice(i, 1);
+  }
+
+  // Particles
+  for (var i = particles.length - 1; i >= 0; i--) {
+    particles[i].draw();
+    if (!particles[i].update()) particles.splice(i, 1);
+  }
+
+  ctx.globalAlpha = 1;
+}
+
+// Kick off with an immediate burst at canvas center
+setTimeout(function () { launch(W * 0.5, H * 0.5); }, 100);
+
+requestAnimationFrame(frame);
 </script>
 </body>
 </html>
