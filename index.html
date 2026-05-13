@@ -199,20 +199,6 @@ c.addEventListener('touchstart', function (e) {
     launch(e.touches[i].clientX, e.touches[i].clientY);
 }, { passive: false });
 
-// ── Auto-launch ────────────────────────────────────────────────────────────
-var nextFire = 0;
-function autoFire(t) {
-  if (t < nextFire) return;
-  var sx = W * 0.12 + Math.random() * W * 0.76;
-  var sy = H * 0.12 + Math.random() * H * 0.76;
-  launch(sx, sy);
-  // Occasionally fire a cluster
-  if (Math.random() < 0.25) {
-    setTimeout(function () { launch(sx + (Math.random() - 0.5) * 80, sy + (Math.random() - 0.5) * 80); }, 160 + Math.random() * 200);
-    setTimeout(function () { launch(sx + (Math.random() - 0.5) * 80, sy + (Math.random() - 0.5) * 80); }, 320 + Math.random() * 300);
-  }
-  nextFire = t + 900 + Math.random() * 1600;
-}
 
 // ── Render loop ────────────────────────────────────────────────────────────
 function frame(t) {
@@ -226,8 +212,6 @@ function frame(t) {
 
   // Use 'lighter' blend for additive glow
   ctx.globalCompositeOperation = 'lighter';
-
-  autoFire(t);
 
   // Rockets
   for (var i = rockets.length - 1; i >= 0; i--) {
@@ -243,9 +227,6 @@ function frame(t) {
 
   ctx.globalAlpha = 1;
 }
-
-// Kick off with an immediate burst at canvas center
-setTimeout(function () { launch(W * 0.5, H * 0.5); }, 100);
 
 requestAnimationFrame(frame);
 </script>
